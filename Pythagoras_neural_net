@@ -1,0 +1,286 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from sklearn.neural_network import MLPRegressor
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+from sklearn.inspection import permutation_importance
+import matplotlib.image as mpimg
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+
+#read data and get necessary variables
+#This is a file that is created in another script which gathers gamelogs from retrosheet since 1995
+gamelogs = pd.read_csv("~/Downloads/Baseball/Pythagoras/gamelogs_since_1995.csv")
+
+gamelogs = gamelogs[['RunsAllowed', 'BA', 'OBP', 'SLG', 'IP','P.BA', 'P.OBP', 'P.SLG', 'BP.ERA', 'BP.WHIP', 'BP.BA']]
+
+gamelogs = gamelogs.dropna()
+
+gamelogs = gamelogs[gamelogs['RunsAllowed'] <= 10]
+
+# Calculate high and low thresholds for each column
+high_BA = gamelogs['P.BA'].mean() + 2 * gamelogs['P.BA'].std()
+low_BA = gamelogs['P.BA'].mean() - 2 * gamelogs['P.BA'].std()
+
+high_OBP = gamelogs['P.OBP'].mean() + 2 * gamelogs['P.OBP'].std()
+low_OBP = gamelogs['P.OBP'].mean() - 2 * gamelogs['P.OBP'].std()
+
+high_SLG = gamelogs['P.SLG'].mean() + 2 * gamelogs['P.SLG'].std()
+low_SLG = gamelogs['P.SLG'].mean() - 2 * gamelogs['P.SLG'].std()
+
+# Filter the DataFrame based on the calculated thresholds
+gamelogs_filtered = gamelogs[
+    (gamelogs['P.BA'] <= high_BA) & (gamelogs['P.BA'] >= low_BA) &
+    (gamelogs['P.OBP'] <= high_OBP) & (gamelogs['P.OBP'] >= low_OBP) &
+    (gamelogs['P.SLG'] <= high_SLG) & (gamelogs['P.SLG'] >= low_SLG)]
+
+x = gamelogs[['BA', 'OBP', 'SLG', 'IP', 'P.BA', 'P.OBP', 'P.SLG', 'BP.ERA', 'BP.WHIP', 'BP.BA']]
+
+y = gamelogs[['RunsAllowed']]
+
+X_train, X_test, y_train, y_test = train_test_split(x, y, random_state=1)
+
+# Define and fit the MLPRegressor model with different parameters
+regr = MLPRegressor(
+    hidden_layer_sizes=(100, 50),  # Two hidden layers with 100 and 50 neurons respectively
+    activation='relu',                 # Activation function
+    solver='adam',                     # Solver for weight optimization
+    alpha=0.01,                      # Regularization term (L2 penalty)
+    batch_size='auto',                 # Size of minibatches for stochastic optimizers
+    learning_rate='adaptive',          # Learning rate schedule for weight updates
+    learning_rate_init=0.01,          # Initial learning rate
+    max_iter=200,                     # Maximum number of iterations
+    random_state=1
+).fit(X_train, y_train.values.ravel())
+
+# Make predictions
+y_pred = regr.predict(X_test)
+
+# Calculate RMSE
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+
+print(f"Root Mean Squared Error (RMSE): {rmse}")
+
+# Calculate feature importance using permutation importance
+perm_importance = permutation_importance(regr, X_test, y_test, n_repeats=10, random_state=1)
+
+# Extract the importance values and sort them
+feature_importance = perm_importance.importances_mean
+sorted_idx = np.argsort(feature_importance)
+
+# Create a bar plot for feature importance
+features = x.columns
+plt.figure(figsize=(10, 6))
+plt.barh(features[sorted_idx], feature_importance[sorted_idx])
+plt.xlabel('Importance')
+plt.ylabel('Features')
+plt.title('Feature Importance')
+plt.show()
+
+#read data and get necessary variables
+#Run "Prepare_Pythagoras_Prediction_Data" to get up-to-date info
+#This is a file that is created in another script to gather updated information about MLB teams
+pred_stats = pd.read_csv("~/Downloads/Baseball/Pythagoras/pythagoras_prediction_set.csv")
+
+pred_stats_x = pred_stats[['BA', 'OBP', 'SLG', 'IP', 'P.BA', 'P.OBP', 'P.SLG', 'BP.ERA', 'BP.WHIP', 'BP.BA']]
+
+daily_stats = pd.read_csv("~/Downloads/Baseball/Pythagoras/pythagoras_daily_stats.csv")
+
+#make predictions
+predictions = regr.predict(pred_stats_x)
+
+daily_stats['RPG'] = predictions
+
+# Convert Matchup to numeric
+daily_stats['Matchup'] = pd.to_numeric(daily_stats['Matchup'], errors='coerce')
+
+# Sort by Matchup
+daily_stats = daily_stats.sort_values(by='Matchup')
+
+# Filter for visiting and home teams and create copies
+visTeams = daily_stats[daily_stats['Home Away'] == 'V'].copy()
+homeTeams = daily_stats[daily_stats['Home Away'] == 'H'].copy()
+
+# Swap RPG values
+filler1 = visTeams['RPG'].values
+filler2 = homeTeams['RPG'].values
+visTeams['RPG'] = filler2
+homeTeams['RPG'] = filler1
+
+# Compute pyth values
+v = visTeams['RPG'] ** 1.83
+h = homeTeams['RPG'] ** 1.83
+q = h.reset_index(drop=True) + v.reset_index(drop=True)
+
+v2 = v.reset_index(drop=True)/q
+h2 = h.reset_index(drop=True)/q
+
+visTeams = visTeams.reset_index()
+homeTeams = homeTeams.reset_index()
+
+visTeams['pyth'] = v2.reset_index(drop=True)
+homeTeams['pyth'] = h2.reset_index(drop=True)
+
+# Create sort column with a sequence of numbers
+visTeams['sort'] = pd.Series(range(1, 2 * len(visTeams) + 1, 2)).values
+homeTeams['sort'] = pd.Series(range(2, 2 * len(homeTeams) + 1, 2)).values
+
+# Combine DataFrames
+Report = pd.concat([visTeams, homeTeams])
+
+# Sort by 'sort' column
+Report = Report.sort_values(by='sort')
+
+# Select columns and reorder
+Report = Report[['Matchup', 'Team', 'Short', 'Name', 'RPG', 'pyth']]
+
+# Rename column 'pyth' to 'Win%'
+Report.rename(columns={'pyth': 'Win%'}, inplace=True)
+
+# Round 'Win%' column to 2 decimal places
+Report['Win%'] = Report['Win%'].round(2)
+
+# Convert 'Moneyline' to numeric, coercing any errors
+daily_stats['Moneyline'] = pd.to_numeric(daily_stats['Moneyline'], errors='coerce')
+
+# Initialize 'xWin' column
+daily_stats['xWin'] = 0
+
+# Apply odds conversion
+for i in range(len(daily_stats)):
+    if daily_stats.loc[i, 'Moneyline'] < 0:
+        daily_stats.loc[i, 'xWin'] = (-1 * daily_stats.loc[i, 'Moneyline']) / (-1 * daily_stats.loc[i, 'Moneyline'] + 100)
+    elif daily_stats.loc[i, 'Moneyline'] > 0:
+        daily_stats.loc[i, 'xWin'] = 100 / (daily_stats.loc[i, 'Moneyline'] + 100)
+        
+# Initialize 'xWin' column
+daily_stats['xRL'] = 0
+
+# Apply odds conversion
+for i in range(len(daily_stats)):
+    if daily_stats.loc[i, 'RL Odds'] < 0:
+        daily_stats.loc[i, 'xRL'] = (-1 * daily_stats.loc[i, 'RL Odds']) / (-1 * daily_stats.loc[i, 'RL Odds'] + 100)
+    elif daily_stats.loc[i, 'RL Odds'] > 0:
+        daily_stats.loc[i, 'xRL'] = 100 / (daily_stats.loc[i, 'RL Odds'] + 100)
+
+# Select columns to join with Report
+house = daily_stats[['Team', 'xWin', 'xRL']]
+
+# Merge with Report DataFrame
+Report = pd.merge(Report, house, on='Team', how='left')
+
+# Compute 'Advantage'
+Report['Advantage'] = Report['Win%'] - Report['xWin']
+
+# Filter for rows where Advantage > 0
+Report_Positive_ML = Report[Report['Advantage'] > 0]
+
+library(readxl)
+library(tidyverse)
+
+results <- read_xlsx("~/Downloads/Baseball/Pythagoras/Pythagoras_NN_Results.xlsx")
+
+results <- results |>
+  filter(is.na(Score) == FALSE)
+
+results <- results |>
+  select(Team, RPG, Score)
+
+results$O.RPG <- NA
+
+for(i in 1:nrow(results)){
+  if(i %% 2 == 1){
+    results$O.RPG[i] <- results$RPG[i+1]
+  }
+  else if(i %% 2 == 0){
+    results$O.RPG[i] <- results$RPG[i-1]
+  }
+}
+results <- results |>
+  select(Team, RPG, O.RPG, Score)
+
+results$O.Score <- NA
+
+for(i in 1:nrow(results)){
+  if(i %% 2 == 1){
+    results$O.Score[i] <- results$Score[i+1]
+  }
+  else if(i %% 2 == 0){
+    results$O.Score[i] <- results$Score[i-1]
+  }
+}
+
+results$Win_by_2 <- ifelse((results$Score - results$O.Score) > 1, 1, 0)
+
+RL.mod <- glm(Win_by_2 ~ RPG + O.RPG + RPG*O.RPG, data = results, family = binomial)
+
+RL.data <- py$Report |>
+  select(Team, RPG)
+
+RL.data$O.RPG <- NA
+
+for(i in 1:nrow(RL.data)){
+  if(i %% 2 == 1){
+    RL.data$O.RPG[i] <- RL.data$RPG[i+1]
+  }
+  else if(i %% 2 == 0){
+    RL.data$O.RPG[i] <- RL.data$RPG[i-1]
+  }
+}
+
+RL.data$RL.2 <- predict(RL.mod, RL.data, type = "response")
+
+results$Cover <- ifelse((results$Score - results$O.Score) > -2, 1, 0)
+
+Cover.mod <- glm(Cover ~ RPG + O.RPG + RPG*O.RPG, data = results, family = binomial)
+
+RL.data$RL.cover <- predict(Cover.mod, RL.data, type = "response")
+
+lines <- py$daily_stats |>
+  select(Team, RL)
+
+RL.data <- left_join(RL.data, lines, by = "Team")
+
+RL.data$`RL%` <- ifelse(RL.data$RL > 0, RL.data$RL.cover, RL.data$RL.2)
+
+RL.data <- RL.data |>
+  select(Team, `RL%`, RL)
+
+colnames(RL.data)[3] <- "Line"
+
+py$Report <- left_join(py$Report, RL.data, by = "Team")
+
+py$Report$RL.adv <- py$Report$RL - py$Report$xRL
+
+Report_save = Report[['Matchup', 'Team', 'Name', 'RPG', 'Win%', 'xWin',
+'Advantage', 'RL%', 'xRL', 'RL.adv', 'Line']]
+
+# Select columns and reorder
+Report_print = Report[['Matchup', 'Short', 'Name', 'RPG', 'Win%', 'xWin',
+'Advantage', 'RL%', 'xRL', 'RL.adv']]
+
+print(Report_print.to_string(index=False))
+
+# Create a figure and axis
+fig, ax = plt.subplots(figsize=(10, 6))
+
+# Plot Advantage vs Team
+ax.bar(Report_Positive_ML['Short'], Report_Positive_ML['Advantage'], color='lightblue')
+
+# Add horizontal lines
+max_advantage = Report_Positive_ML['Advantage'].max()
+ax.axhline(y=max_advantage, color='purple', linestyle='--', label='Max Advantage')
+ax.axhline(y=0.05, color='blue', linestyle='--', label='Threshold (0.05)')
+ax.axhline(y=0, color='red', linestyle='--', label='Zero Advantage')
+
+# Add labels and title
+ax.set_xlabel('Team')
+ax.set_ylabel('Advantage')
+ax.set_title('Pythagoras')
+ax.legend()
+
+# Show plot
+plt.xticks(rotation=45)  # Rotate x labels for better readability
+plt.tight_layout()       # Adjust layout to fit labels
+plt.show()
