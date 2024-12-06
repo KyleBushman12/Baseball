@@ -85,6 +85,7 @@ pred_stats = pd.read_csv("~/Downloads/Baseball/Pythagoras/pythagoras_prediction_
 
 pred_stats_x = pred_stats[['BA', 'OBP', 'SLG', 'IP', 'P.BA', 'P.OBP', 'P.SLG', 'BP.ERA', 'BP.WHIP', 'BP.BA']]
 
+#This is a file that is created in another script to gather updated information about MLB games for the day
 daily_stats = pd.read_csv("~/Downloads/Baseball/Pythagoras/pythagoras_daily_stats.csv")
 
 #make predictions
